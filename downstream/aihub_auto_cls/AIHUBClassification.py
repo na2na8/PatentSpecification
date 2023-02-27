@@ -3,6 +3,7 @@ import torch.nn as nn
 from torchmetrics.classification import MulticlassF1Score, MulticlassAccuracy
 import pytorch_lightning as pl
 from pytorch_lightning import loggers as pl_looggers
+from sadice import SelfAdjDiceLoss
 from kobart import get_pytorch_kobart_model
 from transformers import AutoModel, AutoModelForSequenceClassification, AdamW
 from transformers.modeling_outputs import Seq2SeqSequenceClassifierOutput, SequenceClassifierOutput
@@ -17,7 +18,7 @@ class BartClassificationHead(nn.Module):
         pooler_dropout = config.classifier_dropout
         self.dense = nn.Linear(input_dim, inner_dim)
         self.dropout = nn.Dropout(p=pooler_dropout)
-        self.out_proj = nn.Linear(inner_dim, num_classes)
+        self.out_proj = nn.Linear(inner_dim, num_classes[0])
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         hidden_states = self.dropout(hidden_states)
@@ -58,6 +59,11 @@ class AIHUBClassification(pl.LightningModule) :
 
         num_classes = len(labels[args.cls].keys())
         self.model = AutoModel.from_pretrained(args.model)
+        
+        # self.model.config.classifier_dropout = 0.0
+        # self.model.config.hidden_dropout_prob = 0.0
+        # self.model.config.attention_probs_dropout_prob = 0.0
+
         self.config = self.model.config
         self.config.num_labels = num_classes
         self.is_kobart = args.is_kobart
@@ -69,11 +75,27 @@ class AIHUBClassification(pl.LightningModule) :
         if args.loss_func == 'CE' :
             self.loss_func = nn.CrossEntropyLoss()
         elif args.loss_func == 'DICE' :
-            pass
+            self.loss_func = SelfAdjDiceLoss(
+                                alpha=1.0,
+                                gamma=1.0,
+                                reduction='mean'
+                            )
+        elif args.loss_func == 'FOCAL' :
+            self.loss_func = torch.hub.load(
+                                'adeelh/pytorch-multi-class-focal-loss',
+                                model='FocalLoss',
+                                # alpha=torch.tensor([0.95, 0.98, 0.23, 0.98, 0.97, 0.93, 0.94]),
+                                gamma=2,
+                                reduction='mean',
+                                force_reload=False
+                            )
+
 
         self.softmax = nn.Softmax(dim=1)
         self.f1 = MulticlassF1Score(num_classes=num_classes, average='weighted')
         self.acc = MulticlassAccuracy(num_classes=num_classes, average='weighted')
+
+        self.save_hyperparameters()
 
         
     def forward(self, input_ids, attention_mask, labels=None) :
@@ -91,7 +113,7 @@ class AIHUBClassification(pl.LightningModule) :
             sentence_representation = hidden_states[eos_mask, :].view(hidden_states.size(0), -1, hidden_states.size(-1))[
                 :, -1, :
             ]
-            logits = self.classification_head(sentence_representation)
+            logits = self.classifier(sentence_representation)
 
             loss = self.loss_func(logits.view(-1, self.config.num_labels), labels.view(-1))
 
@@ -194,6 +216,6 @@ class AIHUBClassification(pl.LightningModule) :
 
     def configure_optimizers(self) :
         optimizer = AdamW(self.parameters(), lr=self.learning_rate)
-        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=150)
-        # lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)
+        # lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=150)
+        lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)
         return [optimizer], [lr_scheduler]

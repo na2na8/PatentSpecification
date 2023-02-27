@@ -48,7 +48,7 @@ if __name__ == '__main__' :
     parser.add_argument('--gpu_list', type=str, default='0', help="string; make list by splitting by ','") # gpu list to be used
     parser.add_argument('--learning_rate', type=float, default=1e-5)
     parser.add_argument('--is_kobart', type=boolean_string, default=True, help='kobart tokenizer needs to add bos and eos token')
-    parser.add_argument('--loss_func', type=str, default='CE', help="['CE', 'DICE]")
+    parser.add_argument('--loss_func', type=str, default='CE', help="['CE', 'FOCAL', 'DICE]")
     # task
     parser.add_argument('--task', type=str, default='summary', help="select from ['summary', 'cls']")
     parser.add_argument('--cls', type=str, default=None, help="select from ['LLno', 'Lno', 'Mno', 'Sno', 'SSno']")
@@ -76,12 +76,12 @@ if __name__ == '__main__' :
                                                     save_top_k=1,
                                                     )
     elif args.task == 'cls' :
-        checkpoint_callback = pl.callbacks.ModelCheckpoint(monitor='VAL_LOSS',
+        checkpoint_callback = pl.callbacks.ModelCheckpoint(monitor='VAL_F1',
                                                     dirpath=args.dir_path,
                                                     filename='{epoch:02d}-{VAL_LOSS:.3f}-{VAL_F1:.3f}-{VAL_ACC:.3f}',
                                                     verbose=False,
                                                     save_last=True,
-                                                    mode='min',
+                                                    mode='max',
                                                     save_top_k=1,
                                                     )
     tb_logger = pl_loggers.TensorBoardLogger(os.path.join(args.dir_path, 'tb_logs'))
@@ -94,11 +94,16 @@ if __name__ == '__main__' :
         callbacks = [checkpoint_callback, lr_logger],
         max_epochs=args.epoch,
         gpus=gpu_list
+        # num_sanity_val_steps=0
     )
 
     device = torch.device("cuda")
 
     dm = AIHUBDataModule('/home/ailab/Desktop/NY/2023_ipactory/downstream/aihub_auto_cls/data', args, tokenizer)
+    # train = dm.val_dataloader()
+    # t = next(iter(train))
+    # print(t['encoder_input_ids'].shape)
+    # print(t['decoder_input_ids'].shape)
     
     if args.task == 'summary' :
         model = AIHUBSummarization(args, tokenizer, device)

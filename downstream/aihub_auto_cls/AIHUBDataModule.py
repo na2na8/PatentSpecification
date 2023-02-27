@@ -64,7 +64,7 @@ class AIHUBDataset(Dataset) :
             claims = self.tokenizer.bos_token + re.sub(r'\([^)]*\)', '', self.dataset['claims'].iloc[idx]) + self.tokenizer.eos_token
             encoder_input_ids = self.add_padding_data(self.tokenizer.encode(claims))
             # decoder_inputs : </s><s> ~ </s>, labels : <s> ~ </s>
-            abstract = self.tokenizer.bos_token + self.dataset['abstract'].iloc[idx] # <s> ~ 
+            abstract = self.tokenizer.bos_token + re.sub(r'\([^)]*\)', '', self.dataset['abstract'].iloc[idx]) # <s> ~ 
             labels = self.tokenizer.encode(abstract)
             labels.append(self.tokenizer.eos_token_id) # <s> ~ </s>
             decoder_input_ids = [self.tokenizer.eos_token_id] # </s>
