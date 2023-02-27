@@ -90,14 +90,18 @@ class AIHUBSummarization(pl.LightningModule) :
                 # valid_rouge2 += rouge_scores['rouge2_fmeasure']
                 # valid_rougeL += rouge_scores['rougeL_fmeasure']
                 
-                if pred == '' or target == '' :
-                    total += 1
-                    train_loss += outputs[idx]['loss'].cpu().detach()
-                    continue
-                rouge_scores = self.rouge.get_scores(pred, target)[0]
-                train_rouge1 += rouge_scores['rouge-1']['f']
-                train_rouge2 += rouge_scores['rouge-2']['f']
-                train_rougeL += rouge_scores['rouge-l']['f']
+
+                try :
+                    rouge_scores = self.rouge.get_scores(pred, target)[0]
+                    train_rouge1 += rouge_scores['rouge-1']['f']
+                    train_rouge2 += rouge_scores['rouge-2']['f']
+                    train_rougeL += rouge_scores['rouge-l']['f']
+                except ValueError :
+                    print(pred)
+                    print('---------------------------------------------------')
+                    print(target)
+                    print('===================================================')
+                
                 
                 total += 1
             train_loss += outputs[idx]['loss'].cpu().detach()
@@ -132,14 +136,16 @@ class AIHUBSummarization(pl.LightningModule) :
                 # valid_rouge2 += rouge_scores['rouge2_fmeasure']
                 # valid_rougeL += rouge_scores['rougeL_fmeasure']
                 
-                if pred == '' or target == '' :
-                    total += 1
-                    valid_loss += outputs[idx]['loss'].cpu().detach()
-                    continue
-                rouge_scores = self.rouge.get_scores(pred, target)[0]
-                valid_rouge1 += rouge_scores['rouge-1']['f']
-                valid_rouge2 += rouge_scores['rouge-2']['f']
-                valid_rougeL += rouge_scores['rouge-l']['f']
+                try :
+                    rouge_scores = self.rouge.get_scores(pred, target)[0]
+                    valid_rouge1 += rouge_scores['rouge-1']['f']
+                    valid_rouge2 += rouge_scores['rouge-2']['f']
+                    valid_rougeL += rouge_scores['rouge-l']['f']
+                except ValueError :
+                    print(pred)
+                    print('---------------------------------------------------')
+                    print(target)
+                    print('===================================================')
 
                 total += 1
             valid_loss += outputs[idx]['loss'].cpu().detach()
