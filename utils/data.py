@@ -1,3 +1,4 @@
+import chardet
 import csv
 import math
 import os
@@ -8,6 +9,7 @@ import re
 import numpy as np
 import pandas as pd
 import torch
+from tqdm import tqdm
 from transformers import AutoTokenizer
 
 # get data files list
@@ -26,6 +28,7 @@ def get_datalists() -> list :
     
     return datalists
 
+        
 def masking(doc_tokens, tokenizer, max_length : int, mask_ratio=0.3, poisson_lambda=3.0) -> str :
     ####################################################################
     # - make noised data, encoder input ids, attention mask
@@ -68,10 +71,13 @@ def truncate(path : str, max_length : int, rest : list, tokenizer) :
     ####################################################################
     truncated = []
     f = open(path, 'r')
-    lines = ''.join(f.readlines())
-    lines = lines.replace('\n', '')
-    lines = re.sub(r'\([\d]+\)', '', lines)
-    tokens = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(lines))
+    lines = f.readlines()
+    tokens = []
+    # lines = lines.replace('\n', '')
+    for line in lines :
+        line = re.sub(r'\([\d]+\)', '', line)
+        tokens += tokenizer.convert_tokens_to_ids(tokenizer.tokenize(line))
+        
 
     while len(tokens) >= max_length :
         trunc_size = max_length - len(rest) if not rest else max_length - len(rest) - 1
@@ -107,7 +113,7 @@ def gen_data(max_length : int, tokenizer, save_path : str, init : bool, datalist
     idx = start_idx
     with open(save_path, 'a', newline='') as f :
         write = csv.writer(f)
-        for idx in range(start_idx, num_data) :
+        for idx in tqdm(range(start_idx, num_data)) :
             truncated, rest = truncate(datalists[idx], max_length - 2, rest, tokenizer)
 
             for trunc in truncated :
@@ -117,7 +123,7 @@ def gen_data(max_length : int, tokenizer, save_path : str, init : bool, datalist
                 write.writerow(row)
             
             with open('./data_gen.out', 'w') as log :
-                line = f'last idx : {idx}'
+                line = f'last doc : {datalists[idx]}'
                 log.write(line)
                 log.close()
 
@@ -134,6 +140,9 @@ if __name__ == "__main__" :
     with open('./datalist.pkl', 'wb') as f :
         pickle.dump(datalists, f)
     
+    # with open('/home/ailab/Desktop/NY/2023_ipactory/utils/datalist.pkl', 'rb') as f :
+    #     datalists = pickle.load(f)
+        
     split_idx = math.ceil(len(datalists)/10)
     valid = datalists[:split_idx]
     train = datalists[split_idx:]
