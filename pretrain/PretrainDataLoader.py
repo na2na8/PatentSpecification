@@ -5,10 +5,10 @@ from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer
 
 class PretrainDataset(Dataset) :
-    def __init__(self, csv_file : str, chunksize : int, num_data : int, args) :
+    def __init__(self, csv_file : str, chunksize : int, num_data : int, tokenizer, args) :
         self.chunksize = chunksize
         self.csv_file = csv_file
-        self.len = num_data // self.chunksize
+        self.len = num_data
 
         self.chunk_idx = 0
         self.data = next(
@@ -16,11 +16,11 @@ class PretrainDataset(Dataset) :
                 self.csv_file,
                 skiprows=1,
                 chunksize=self.chunksize,
-                names=['descriptions', 'claims']
+                names=['idx', 'encoder_input', 'decoder_input']
             )
         )
 
-        self.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
+        self.tokenizer = tokenizer
         self.max_length = args.max_length
 
     
@@ -33,15 +33,15 @@ class PretrainDataset(Dataset) :
                     self.csv_file,
                     skiprows=(idx//self.chunksize) * self.chunksize + 1,
                     chunksize=self.chunksize,
-                    names=['description', 'claim']
+                    names=['idx', 'encoder_input', 'decoder_input']
                 )
             )
 
-        description = self.data['descriptions'].iloc[chunk_idx]
-        claim = self.data['claims'].iloc[chunk_idx]
+        encoder_input = self.data['encoder_input'].iloc[chunk_idx]
+        decoder_input = self.data['decoder_input'].iloc[chunk_idx]
 
         encoder_inputs = self.tokenizer(
-            description,
+            encoder_input,
             return_tensors='pt',
             max_length=self.max_length,
             padding='max_length',
@@ -49,21 +49,22 @@ class PretrainDataset(Dataset) :
         )
 
         decoder_inputs = self.tokenizer(
-            claim,
+            decoder_input,
             return_tensors='pt',
             max_length=self.max_length,
             padding='max_length',
             truncation=True
         )
 
-        label_tokens = self.tokenizer.tokenize(claim)
-        labels = torch.tensor(
-            label_tokens + [-100] * (self.max_length - len(label_tokens))
-        )
+        label_tokens = self.tokenizer(decoder_input)['input_ids'][1:] + [1]
+        # labels = torch.tensor(
+        #     label_tokens + [-100] * (self.max_length - len(label_tokens))
+        # )
+        labels = torch.tensor(label_tokens + [-100] * (self.max_length - len(label_tokens)))
 
         return {
-            'encoder_input_ids' : encoder_inputs['input_ids'][0],
-            'encoder_attention_mask' : encoder_inputs['attention_mask'][0],
+            'input_ids' : encoder_inputs['input_ids'][0],
+            'attention_mask' : encoder_inputs['attention_mask'][0],
             'decoder_input_ids' : decoder_inputs['input_ids'][0],
             'decoder_attention_mask' : decoder_inputs['attention_mask'][0],
             'labels' : labels
