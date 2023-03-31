@@ -1,167 +1,126 @@
-import argparse
-import os
-import sys
-
 import evaluate
+import math
 import numpy as np
-
-
-from transformers import BartForConditionalGeneration, AutoTokenizer
-from transformers import DataCollatorForSeq2Seq
-from transformers import Seq2SeqTrainer, Seq2SeqTrainingArguments
-from transformers import AdamW
-from transformers.utils import logging
-
+import os
+import re
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
 
-from PretrainDataLoader import PretrainDataset
+import pytorch_lightning as pl
+from pytorch_lightning import loggers as pl_loggers
+from transformers import BartForConditionalGeneration
 
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+from utils.scheduler import LinearWarmupLR
 
-device = torch.device("cuda")
-
-metric = evaluate.load("sacrebleu")
-tokenizer = AutoTokenizer.from_pretrained('gogamza/kobart-base-v1')
-
-def compute_metrics(eval_preds) :
-    preds, labels = eval_preds
-    if isinstance(preds , tuple) :
-        preds = preds[0]
-    
-    decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
-
-    labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
-    decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
-
-    decoded_preds = [pred.strip() for pred in decoded_preds]
-    decoded_labels = [[label.strip()] for label in decoded_labels]
-
-    result = metric.compute(predictions=decoded_preds, references=decoded_labels)
-    return {"bleu" : result["score"]}
-
-class PatentBART(nn.Module) :
-    def __init__(self, args) :
+class PatentPretrain(pl.LightningModule) :
+    def __init__(self, args, device, tokenizer) :
         super().__init__()
-        self.model = BartForConditionalGeneration.from_pretrained(args.model)
+        self._device = device
+        self.ckpt_dir = args.ckpt_dir
+        self.num_warmup_steps = args.num_warmup_steps
+
+        self.batch_size = args.batch_size
+
+        self.min_learning_rate = args.min_learning_rate
+        self.max_learning_rate = args.max_learning_rate
+        self.num_training_steps = math.ceil((args.num_data - args.skiprows) / self.batch_size)
         
-    def forward(self, inputs) :
-        print(inputs)
+        self.tokenizer = tokenizer
+        self.model = BartForConditionalGeneration.from_pretrained(args.model)
+
+        self.metric = evaluate.load("sacrebleu")
+
+        self.save_hyperparameters(
+            {
+                **self.model.config.to_dict(),
+                "total_steps" : self.num_training_steps,
+                "max_learning_rate": args.max_learning_rate,
+                "min_learning_rate": args.min_learning_rate,
+            }
+        )
+
+    def forward(
+        self,
+        encoder_input_ids,
+        encoder_attention_mask,
+        decoder_input_ids,
+        decoder_attention_mask,
+        labels=None
+    ) :
         outputs = self.model(
-            input_ids=inputs['input_ids'],
-            attention_mask=inputs['attention_mask'],
-            decoder_input_ids=inputs['decoder_input_ids'],
-            decoder_attention_mask=inputs['decoder_attention_mask'],
-            labels=inputs['labels']
+            input_ids=encoder_input_ids,
+            attention_mask=encoder_attention_mask,
+            decoder_input_ids=decoder_input_ids,
+            decoder_attention_mask=decoder_attention_mask,
+            labels=labels
         )
 
         return outputs
-
-
-class PatentPretrain() :
-    def __init__(self, args) :
-        self.args = args
-        # self.model = PatentBART(self.args)
-        self.model = BartForConditionalGeneration.from_pretrained(args.model)
-        self.tokenizer = AutoTokenizer.from_pretrained(self.args.tokenizer)
-        # self.data_collator = DataCollatorForSeq2Seq(self.tokenizer, model=self.model)
-        self.train_dataset = PretrainDataset(self.args.train_path, 10000, 25000, self.tokenizer, self.args)
-        self.eval_dataset = PretrainDataset(self.args.valid_path, 10000, 5000, self.tokenizer, self.args)
     
-    def main(self) :
-        logging.set_verbosity_info()
-        # logging.basicConfig(
-        #     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        #     datefmt="%m/%d/%Y %H:%M:%S",
-        #     handlers=[logging.StreamHandler(sys.stdout)]
-        # )
-        logger = logging.get_logger("PatentBART")
-        logger.debug("DEBUG")
-
-        training_args = Seq2SeqTrainingArguments(
-            output_dir=self.args.output_dir,
-            overwrite_output_dir=True,
-            num_train_epochs=self.args.epoch,
-            per_device_train_batch_size=self.args.batch_size,
-            save_strategy='steps',
-            save_steps=10000,
-            save_total_limit=1,
-            # learning rate scheduler, optimizer
-            learning_rate=self.args.learning_rate,
-            weight_decay=0.01,
-            lr_scheduler_type='linear',
-            # warmup_steps=0,
-            # warmup_ratio=0.0
-            predict_with_generate=True,
-            fp16=True,
-            dataloader_num_workers=self.args.num_workers,
-            # evaluation
-            evaluation_strategy='no',
-            # logging
-            log_level='debug',
-            logging_dir=self.args.logging_dir,
-            logging_strategy='steps',
-            logging_steps=500
-
+    def step(self, batch, batch_idx, state) :
+        outputs = self(
+            encoder_input_ids=batch['input_ids'].to(self._device),
+            encoder_attention_mask=batch['attention_mask'].to(self._device),
+            decoder_input_ids=batch['decoder_input_ids'].to(self._device),
+            decoder_attention_mask=batch['decoder_input_ids'].to(self._device),
+            labels=batch['labels'].to(self._device)
         )
 
-        log_level = training_args.get_process_log_level()
-        
-        logger.setLevel(log_level)
-        # datasets.utils.logging.set_verbosity(log_level)
-        logging.set_verbosity(log_level)
+        loss = outputs.loss
+        logits = outputs.logits
 
-        # training_args._n_gpu = self.args.gpus
+        preds = np.array(torch.argmax(logits.cpu(), dim=2))
+        targets = np.array(batch['labels'].cpu())
+        targets = np.where(targets != -100, targets, self.tokenizer.pad_token_id) # -100 to pad tokens
 
-        trainer = Seq2SeqTrainer(
-            model=self.model,
-            args=training_args,
-            train_dataset=self.train_dataset,
-            eval_dataset=self.eval_dataset,
-            # data_collator=self.data_collator,
-            compute_metrics=compute_metrics
+        decoded_preds = [re.sub(r"</s>[\w\W]*", "", pred) for pred in self.tokenizer.batch_decode(preds)]
+        decoded_targets = self.tokenizer.batch_decode(preds, skip_special_tokens=True)
+        bleu = self.metric.compute(predictions=decoded_preds, references=decoded_targets)['score']
 
-        )
+        self.log(f"{state.upper()}_STEP_LOSS", loss, prog_bar=True)
+        self.log(f"{state.upper()}_STEP_BLEU", bleu, prog_bar=True)
 
-        trainer.get_train_dataloader(self.train_dataset)
-        trainer.get_eval_dataloader(self.eval_dataset)
-
-        trainer.train()
-        # trainer.train(resume_from_checkpoint='path_to_ckpt')
-        trainer.save_model(self.args.output_dir)
+        return {
+            'loss' : loss,
+            'bleu' : torch.tensor(bleu)
+        }
     
-        trainer.evaluate(max_length=self.args.max_length)
+    def training_step(self, batch, batch_idx) :
+        return self.step(batch, batch_idx, 'train')
+    
+    def validation_step(self, batch, batch_idx) :
+        return self.step(batch, batch_idx, 'valid')
+    
+    def epoch_end(self, outputs, state) :
+        loss = torch.stack([output['loss'] for output in outputs]).mean()
+        bleu = torch.stack([output['bleu'] for output in outputs]).mean()
 
+        self.log(f'{state.upper()}_LOSS', loss, on_epoch=True, prog_bar=True)
+        self.log(f'{state.upper()}_BLEU', bleu, on_epoch=True, prog_bar=True)
 
+        return (loss, bleu)
         
+    
+    def training_epoch_end(self, outputs, state='train') :
+        self.epoch_end(outputs, state)
 
-if __name__ == "__main__" :
-    parser = argparse.ArgumentParser()
-    g1 = parser.add_argument_group("CommonArgument")
-    g1.add_argument("--train_path", type=str, default='/home/ailab/Desktop/NY/2023_ipactory/data/csv/train.csv')
-    g1.add_argument("--valid_path", type=str, default='/home/ailab/Desktop/NY/2023_ipactory/data/csv/valid.csv')
-    g1.add_argument("--max_length", type=int, default=512)
-    g1.add_argument("--tokenizer", type=str, default="gogamza/kobart-base-v1")
-    g1.add_argument("--model", type=str, default="gogamza/kobart-base-v1")
-
-    g2 = parser.add_argument_group("TrainingArgument")
-    g2.add_argument("--output_dir", type=str, default='/home/ailab/Desktop/NY/2023_ipactory/ckpt/test')
-    g2.add_argument("--epoch", type=int, default=1)
-    g2.add_argument("--batch_size", type=int, default=16)
-    g2.add_argument("--learning_rate", type=float, default=1e-5)
-    g2.add_argument("--num_workers", type=int, default=20)
-    g2.add_argument("--logging_dir", type=str, default='/home/ailab/Desktop/NY/2023_ipactory/log/test')
-
-    args = parser.parse_args()
-
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
-    dataset = PretrainDataset(args.train_path, 10000, 25000, tokenizer, args)
-    dm = DataLoader(dataset, batch_size=16, num_workers=16)
-    t = next(iter(dm))
-    # d = next(iter(dataset))
-    print(t)
-    # train = PatentPretrain(args)
-    # train.main()
-    # parser.add_argument("--gpus", )
+    def validation_epoch_end(self, outputs, state='valid') :
+        loss, bleu = self.epoch_end(outputs, state)
+        self.model.save_pretrained(
+            os.path.join(
+                self.ckpt_dir,
+                f"model-{self.current_epoch:02d}epoch-{self.global_step}steps-{loss:.4f}loss-{bleu:.4f}bleu",
+            ),
+        )
+    
+    def configure_optimizers(self) :
+        optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.max_learning_rate)
+        lr_scheduler = LinearWarmupLR(
+            optimizer, 
+            self.num_warmup_steps, 
+            self.num_training_steps, 
+            self.min_learning_rate / self.max_learning_rate,
+        )
+        return {
+            'optimizer' : optimizer,
+            "lr_scheduler": {"scheduler": lr_scheduler, "interval": "step", "name": "Learning Rate"}
+        }
