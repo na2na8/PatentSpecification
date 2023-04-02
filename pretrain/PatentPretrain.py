@@ -112,6 +112,7 @@ class PatentPretrain(pl.LightningModule) :
             ),
         )
     
+
     def configure_optimizers(self) :
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.max_learning_rate)
         lr_scheduler = LinearWarmupLR(
@@ -124,3 +125,9 @@ class PatentPretrain(pl.LightningModule) :
             'optimizer' : optimizer,
             "lr_scheduler": {"scheduler": lr_scheduler, "interval": "step", "name": "Learning Rate"}
         }
+        
+    
+
+    
+    
+

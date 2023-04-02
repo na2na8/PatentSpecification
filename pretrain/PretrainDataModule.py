@@ -5,15 +5,18 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 class PretrainDataset(Dataset) :
-    def __init__(self, csv_file : str, skiprows : int, chunksize : int, num_data : int, tokenizer, args) :
+    def __init__(self, csv_file : str, skiprows : int, trained_rows : int, chunksize : int, num_data : int, tokenizer, state : str, args) :
         self.chunksize = chunksize
         self.csv_file = csv_file
-        self.len = num_data # 35091902
+        if state == 'train' :
+            self.len = num_data - (skiprows + trained_rows)# 35091902 - (skiprows + trained_rows)
+        else :
+            self.len = skiprows
 
         self.chunk_idx = 0
         self.data = pd.read_csv(
             self.csv_file,
-            skiprows=1 + skiprows,
+            skiprows=1 + skiprows + trained_rows,
             chunksize=self.chunksize,
             names=['idx', 'encoder_input', 'decoder_input'],
             encoding='utf-8',
@@ -66,10 +69,11 @@ class PretrainDataset(Dataset) :
         return self.len
     
 class PretrainDataModule(pl.LightningDataModule) :
-    def __init__(self, path : str, skiprows : int, chunksize : int, num_data : int, tokenizer, args) :
+    def __init__(self, path : str, skiprows : int, trained_rows : int, chunksize : int, num_data : int, tokenizer, args) :
         '''
         path : path of csv
         skiprows : nums of valid set # valid from 0, train from end of validation
+        trained_rows : rows to skip(trained) - for starting train from checkpoint
         chunksize : chunksize
         num_data : num of entire data
         tokenizer : BartTokenizer
@@ -82,6 +86,7 @@ class PretrainDataModule(pl.LightningDataModule) :
 
         self.path = path
         self.skiprows = skiprows
+        self.trained_rows = trained_rows
         self.chunksize = chunksize
         self.num_data = num_data
 
@@ -92,18 +97,22 @@ class PretrainDataModule(pl.LightningDataModule) :
         self.set_train = PretrainDataset(
             self.path, 
             self.skiprows, 
+            self.trained_rows,
             self.chunksize, 
-            self.num_data - self.skiprows, 
+            self.num_data - (self.skiprows + self.trained_rows), 
             self.tokenizer, 
+            "train",
             self.args
         )
 
         self.set_valid = PretrainDataset(
             self.path,
             0,
+            0,
             self.chunksize,
             self.skiprows,
             self.tokenizer,
+            "valid",
             self.args
         )
 
