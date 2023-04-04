@@ -117,9 +117,22 @@ class PretrainDataModule(pl.LightningDataModule) :
         )
 
     def train_dataloader(self) :
-        train = DataLoader(self.set_train, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=True)
+        train = DataLoader(
+            self.set_train, 
+            batch_size=self.batch_size, 
+            num_workers=self.num_workers, 
+            pin_memory=False,
+            multiprocessing_context="fork",
+            shuffle=True
+        )
         return train
     
     def val_dataloader(self) :
-        valid = DataLoader(self.set_valid, batch_size=self.batch_size, num_workers=self.num_workers)
+        valid = DataLoader(
+            self.set_valid, 
+            batch_size=self.batch_size, 
+            num_workers=self.num_workers,
+            multiprocessing_context="fork",
+            pin_memory=False
+        )
         return valid

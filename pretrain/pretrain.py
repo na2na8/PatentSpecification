@@ -50,7 +50,7 @@ if __name__ == "__main__" :
     # g2.add_argument("--num_data", type=int, default=15000)
     g2.add_argument("--min_learning_rate", type=float, default=1e-5)
     g2.add_argument("--max_learning_rate", type=float, default=1e-4)
-    g2.add_argument("--num_workers", type=int, default=20)
+    g2.add_argument("--num_workers", type=int, default=8)
     g2.add_argument("--logging_dir", type=str, default='/home/ailab/Desktop/NY/2023_ipactory/log/basic')
 
     args = parser.parse_args()
@@ -68,9 +68,9 @@ if __name__ == "__main__" :
     trained_rows = args.ckpt_last_step * args.batch_size
     dm = PretrainDataModule(args.path, args.skiprows, trained_rows , args.chunksize, args.num_data, tokenizer, args)
     # dm = PretrainDataModule(args.path, args.skiprows, 0 , 10000, args.num_data, tokenizer, args)
-    dm.setup()
-    train = dm.train_dataloader()
-    t = next(iter(train))
+    # dm.setup()
+    # train = dm.train_dataloader()
+    # t = next(iter(train))
 
     gpu_list = [int(gpu) for gpu in args.gpu_lists.split(',')]
 
@@ -84,7 +84,7 @@ if __name__ == "__main__" :
                                 mode='min',
                                 save_top_k=2
                             )
-    checkpoint_callback.CHECKPINT_NAME_LAST = '{step:06d}-LAST-{TRAIN_STEP_LOSS:.3f}-{TRAIN_STEP_BLEU:.3f}'
+    checkpoint_callback.CHECKPOINT_NAME_LAST = '{step:06d}-LAST-{TRAIN_STEP_LOSS:.3f}-{TRAIN_STEP_BLEU:.3f}'
     # checkpoint_callback = CheckpointEveryNSteps(
     #                             save_step_frequency=500,
     #                             ckpt_path=args.ckpt_path,
@@ -101,7 +101,7 @@ if __name__ == "__main__" :
         log_every_n_steps=100,
         max_epochs=args.epochs,
         accelerator='gpu',
-        devices=gpu_list
+        devices=gpu_list,
     )
 
     trainer.fit(model, dm)
