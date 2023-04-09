@@ -76,6 +76,7 @@ class PatentPretrain(pl.LightningModule) :
         decoded_targets = self.tokenizer.batch_decode(preds, skip_special_tokens=True)
         bleu = self.metric.compute(predictions=decoded_preds, references=decoded_targets)['score']
 
+        self.log(f"{state.upper()}_IDX", batch['idx'][len(batch['idx'])])
         self.log(f"{state.upper()}_STEP_LOSS", loss, prog_bar=True)
         self.log(f"{state.upper()}_STEP_BLEU", bleu, prog_bar=True)
 

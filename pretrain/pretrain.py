@@ -77,14 +77,14 @@ if __name__ == "__main__" :
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
                                 monitor='TRAIN_STEP_LOSS',
                                 dirpath=args.ckpt_dir,
-                                filename='{step:06d}-{TRAIN_STEP_LOSS:.3f}-{TRAIN_STEP_BLEU:.3f}',
+                                filename='{step:06d}-{TRAIN_IDX}-{TRAIN_STEP_LOSS:.3f}-{TRAIN_STEP_BLEU:.3f}',
                                 verbose=False,
                                 save_last=True,
                                 every_n_train_steps=500,
                                 mode='min',
                                 save_top_k=2
                             )
-    checkpoint_callback.CHECKPOINT_NAME_LAST = '{step:06d}-LAST-{TRAIN_STEP_LOSS:.3f}-{TRAIN_STEP_BLEU:.3f}'
+    checkpoint_callback.CHECKPOINT_NAME_LAST = '{step:06d}-LAST-{TRAIN_IDX}-{TRAIN_STEP_LOSS:.3f}-{TRAIN_STEP_BLEU:.3f}'
     # checkpoint_callback = CheckpointEveryNSteps(
     #                             save_step_frequency=500,
     #                             ckpt_path=args.ckpt_path,

@@ -58,6 +58,7 @@ class PretrainDataset(Dataset) :
         labels = torch.tensor(label_tokens + [-100] * (self.max_length - len(label_tokens)))
 
         return {
+            'idx' : idx,
             'input_ids' : encoder_inputs['input_ids'][0],
             'attention_mask' : encoder_inputs['attention_mask'][0],
             'decoder_input_ids' : decoder_inputs['input_ids'][0],
